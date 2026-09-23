@@ -74,6 +74,16 @@
 
   <!-- Charts -->
   <h2 class="text-lg font-bold mb-3" style="color: var(--deep);">Trends</h2>
+
+  <div class="bg-white rounded-lg border border-gray-300 p-4 shadow-sm mb-6">
+    <h3 class="font-semibold mb-1 text-sm">Combined Overview -- All Metrics</h3>
+    <p class="text-xs text-gray-600 mb-2">
+      Left axis (solid lines): Lake Input, Well Meter, City Water -- all in the tens of thousands.
+      Right axis (dashed lines): Well Flow (gal/min) and Lake Usage (gal) -- much smaller numbers, would be invisible on the left scale.
+    </p>
+    <div class="chart-box" style="height: 340px;"><canvas id="overviewChart"></canvas></div>
+  </div>
+
   <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
     <div class="bg-white rounded-lg border border-gray-300 p-4 shadow-sm">
       <h3 class="font-semibold mb-2 text-sm">Lake Input &amp; Well Meter (gal)</h3>
@@ -249,6 +259,8 @@ function makeLineDataset(field, label, color) {
 function renderCharts() {
   const labels = chartLabels();
 
+  renderOverviewChart(labels);
+
   buildOrUpdate("meterChart", labels, [
     makeLineDataset("lakeInput", "Lake Input (gal)", "#1584a8"),
     makeLineDataset("wellMeter", "Well Meter (gal)", "#0b3d5c"),
@@ -262,6 +274,51 @@ function renderCharts() {
   buildOrUpdate("usageChart", labels, [
     makeLineDataset("lakeUsage", "Lake Usage (gal)", "#1584a8"),
   ]);
+}
+
+function renderOverviewChart(labels) {
+  const bigAxisDatasets = [
+    { ...makeLineDataset("lakeInput", "Lake Input (gal)", "#1584a8"), yAxisID: "y" },
+    { ...makeLineDataset("wellMeter", "Well Meter (gal)", "#0b3d5c"), yAxisID: "y" },
+    { ...makeLineDataset("cityWater", "City Water (CCF)", "#2fb4c9"), yAxisID: "y" },
+  ];
+  const smallAxisDatasets = [
+    { ...makeLineDataset("wellFlow", "Well Flow (gal/min)", "#c9822f"), yAxisID: "y1", borderDash: [6, 4] },
+    { ...makeLineDataset("lakeUsage", "Lake Usage (gal)", "#c92f5e"), yAxisID: "y1", borderDash: [6, 4] },
+  ];
+  const datasets = [...bigAxisDatasets, ...smallAxisDatasets];
+
+  if (charts.overviewChart) {
+    charts.overviewChart.data.labels = labels;
+    charts.overviewChart.data.datasets = datasets;
+    charts.overviewChart.update();
+    return;
+  }
+  const ctx = document.getElementById("overviewChart").getContext("2d");
+  charts.overviewChart = new Chart(ctx, {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      scales: {
+        x: { title: { display: true, text: "Day of month" } },
+        y: {
+          type: "linear",
+          position: "left",
+          title: { display: true, text: "Meter readings (gal / CCF)" },
+        },
+        y1: {
+          type: "linear",
+          position: "right",
+          title: { display: true, text: "Well Flow (gal/min) / Lake Usage (gal)" },
+          grid: { drawOnChartArea: false },
+        },
+      },
+      plugins: { legend: { position: "bottom" } },
+    },
+  });
 }
 
 function buildOrUpdate(canvasId, labels, datasets) {
