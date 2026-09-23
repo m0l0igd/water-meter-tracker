@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Water Meter Readings Tracker</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  /* Water/lake themed palette -- deliberately not Walmart branding. */
+  :root {
+    --deep: #0b3d5c;
+    --mid: #1584a8;
+    --accent: #2fb4c9;
+    --sand: #f4efe4;
+    --warn-bg: #fff3cd;
+    --warn-text: #7a5c00;
+  }
+  body { background: var(--sand); }
+  input[type="number"]:focus, input[type="text"]:focus {
+    outline: 3px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .flagged { background: var(--warn-bg) !important; }
+  .chart-box { position: relative; height: 260px; }
+</style>
+</head>
+<body class="text-gray-900">
+
+<header class="text-white" style="background: var(--deep);">
+  <div class="max-w-6xl mx-auto px-4 py-5">
+    <h1 class="text-2xl font-bold"> Water Meter Readings Tracker</h1>
+    <p class="text-sm opacity-90 mt-1">Lake input, city water, and well meter log — click any cell to edit. Changes save automatically in your browser.</p>
+  </div>
+</header>
+
+<main class="max-w-6xl mx-auto px-4 py-6">
+
+  <!-- Assumption / status banner -->
+  <div id="assumptionBanner" class="flex flex-wrap items-center gap-3 rounded-lg border border-yellow-400 bg-yellow-50 px-4 py-3 mb-6 text-sm text-yellow-900">
+    <span class="font-semibold"> Month assumed:</span>
+    <span>The month name was cut off in the original photo. Set the correct one here:</span>
+    <label class="sr-only" for="monthSelect">Month</label>
+    <select id="monthSelect" class="rounded border border-yellow-500 px-2 py-1"></select>
+    <label class="sr-only" for="yearInput">Year</label>
+    <input id="yearInput" type="number" value="2026" class="w-24 rounded border border-yellow-500 px-2 py-1" aria-label="Year">
+    <span id="saveStatus" class="ml-auto text-xs text-gray-600" aria-live="polite"></span>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="flex flex-wrap gap-2 mb-4">
+    <button id="resetBtn" class="rounded-md border border-gray-400 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-100">Reset to Original Data</button>
+    <button id="exportBtn" class="rounded-md text-white px-3 py-2 text-sm font-medium" style="background: var(--mid);">Export CSV</button>
+    <span class="text-xs text-gray-600 self-center">Cells shaded yellow were flagged during transcription (obscured/illegible in the source photo) — please verify against the original log.</span>
+  </div>
+
+  <!-- Editable table -->
+  <div class="overflow-x-auto rounded-lg border border-gray-300 bg-white shadow-sm mb-8">
+    <table class="min-w-full text-sm">
+      <thead style="background: var(--deep);" class="text-white">
+        <tr>
+          <th scope="col" class="px-3 py-2 text-left">Date</th>
+          <th scope="col" class="px-3 py-2 text-right">Lake Input meter, gal</th>
+          <th scope="col" class="px-3 py-2 text-right">City water meter, CCF</th>
+          <th scope="col" class="px-3 py-2 text-right">Well meter, gal</th>
+          <th scope="col" class="px-3 py-2 text-right">Well Flow, gal/min</th>
+          <th scope="col" class="px-3 py-2 text-right">Lake Usage, gal</th>
+          <th scope="col" class="px-3 py-2 text-left">Notes</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  <!-- Charts -->
+  <h2 class="text-lg font-bold mb-3" style="color: var(--deep);">Trends</h2>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+    <div class="bg-white rounded-lg border border-gray-300 p-4 shadow-sm">
+      <h3 class="font-semibold mb-2 text-sm">Lake Input &amp; Well Meter (gal)</h3>
+      <div class="chart-box"><canvas id="meterChart"></canvas></div>
+    </div>
+    <div class="bg-white rounded-lg border border-gray-300 p-4 shadow-sm">
+      <h3 class="font-semibold mb-2 text-sm">City Water Meter (CCF)</h3>
+      <div class="chart-box"><canvas id="cityChart"></canvas></div>
+    </div>
+    <div class="bg-white rounded-lg border border-gray-300 p-4 shadow-sm">
+      <h3 class="font-semibold mb-2 text-sm">Well Flow (gal/min)</h3>
+      <div class="chart-box"><canvas id="flowChart"></canvas></div>
+    </div>
+    <div class="bg-white rounded-lg border border-gray-300 p-4 shadow-sm">
+      <h3 class="font-semibold mb-2 text-sm">Lake Usage (gal)</h3>
+      <div class="chart-box"><canvas id="usageChart"></canvas></div>
+    </div>
+  </div>
+
+  <footer class="text-xs text-gray-500 pb-8">
+    Transcribed from a handwritten meter-reading log. Data lives entirely in your browser (localStorage) — edits here don't change the source file in this repo.
+  </footer>
+</main>
+
+<script>
+// ---------------------------------------------------------------------
+// Original transcribed data (matches Water_Meter_Readings.xlsx exactly).
+// null = blank in the source log.
+// ---------------------------------------------------------------------
+const ORIGINAL_DATA = [
+  {day:1,  lakeInput:35244, cityWater:29446, wellMeter:196000, wellFlow:33.9, lakeUsage:4.25, note:""},
+  {day:2,  lakeInput:35294, cityWater:29472, wellMeter:48660,  wellFlow:33.9, lakeUsage:4.5,  note:""},
+  {day:3,  lakeInput:35328, cityWater:29483, wellMeter:48000,  wellFlow:33.8, lakeUsage:4.75, note:""},
+  {day:4,  lakeInput:35347, cityWater:29483, wellMeter:48540,  wellFlow:33.9, lakeUsage:4.5,  note:""},
+  {day:5,  lakeInput:null,  cityWater:null,  wellMeter:null,   wellFlow:null, lakeUsage:null, note:""},
+  {day:6,  lakeInput:null,  cityWater:null,  wellMeter:null,   wellFlow:null, lakeUsage:null, note:""},
+  {day:7,  lakeInput:null,  cityWater:null,  wellMeter:null,   wellFlow:null, lakeUsage:null, note:""},
+  {day:8,  lakeInput:35463, cityWater:29500, wellMeter:196000, wellFlow:34.2, lakeUsage:4.5,  note:""},
+  {day:9,  lakeInput:35489, cityWater:29501, wellMeter:48700,  wellFlow:34,   lakeUsage:4.5,  note:""},
+  {day:10, lakeInput:35526, cityWater:29518, wellMeter:49100,  wellFlow:34,   lakeUsage:4.75, note:""},
+  {day:11, lakeInput:35545, cityWater:29518, wellMeter:49350,  wellFlow:null, lakeUsage:4.5,  note:"Well Flow illegible (obscured by pen in photo)"},
+  {day:12, lakeInput:null,  cityWater:null,  wellMeter:null,   wellFlow:null, lakeUsage:null, note:""},
+  {day:13, lakeInput:null,  cityWater:2,     wellMeter:null,   wellFlow:null, lakeUsage:null, note:"Only a partial '2' visible for City water meter -- verify original"},
+  {day:14, lakeInput:35638, cityWater:29531, wellMeter:146000, wellFlow:34.2, lakeUsage:null, note:"Lake Usage illegible (obscured by pen in photo)"},
+  {day:15, lakeInput:35665, cityWater:29535, wellMeter:52370,  wellFlow:33.8, lakeUsage:5,    note:""},
+  {day:16, lakeInput:35686, cityWater:29538, wellMeter:45320,  wellFlow:34.2, lakeUsage:5,    note:""},
+  {day:17, lakeInput:35716, cityWater:29541, wellMeter:49000,  wellFlow:34,   lakeUsage:5.75, note:""},
+  {day:18, lakeInput:35760, cityWater:29541, wellMeter:48900,  wellFlow:34,   lakeUsage:6,    note:""},
+  {day:19, lakeInput:null,  cityWater:null,  wellMeter:null,   wellFlow:null, lakeUsage:null, note:""},
+  {day:20, lakeInput:null,  cityWater:null,  wellMeter:null,   wellFlow:null, lakeUsage:null, note:""},
+  {day:21, lakeInput:35854, cityWater:29543, wellMeter:146600, wellFlow:34,   lakeUsage:6.75, note:""},
+  {day:22, lakeInput:35858, cityWater:29543, wellMeter:22380,  wellFlow:null, lakeUsage:6.5,  note:"Well Flow shown as dash (—) in original -- not recorded"},
+  {day:23, lakeInput:35868, cityWater:29543, wellMeter:28130,  wellFlow:null, lakeUsage:6,    note:'City water shown as ditto mark (") = same as row above; Well Flow shown as dash (—) -- not recorded'},
+  {day:24, lakeInput:null,  cityWater:null,  wellMeter:null,   wellFlow:null, lakeUsage:null, note:""},
+  {day:25, lakeInput:null,  cityWater:null,  wellMeter:null,   wellFlow:null, lakeUsage:null, note:""},
+  {day:26, lakeInput:null,  cityWater:null,  wellMeter:null,   wellFlow:null, lakeUsage:null, note:""},
+  {day:27, lakeInput:null,  cityWater:null,  wellMeter:null,   wellFlow:null, lakeUsage:null, note:""},
+  {day:28, lakeInput:null,  cityWater:null,  wellMeter:null,   wellFlow:null, lakeUsage:null, note:""},
+  {day:29, lakeInput:null,  cityWater:null,  wellMeter:null,   wellFlow:null, lakeUsage:null, note:""},
+  {day:30, lakeInput:null,  cityWater:null,  wellMeter:null,   wellFlow:null, lakeUsage:null, note:""},
+];
+
+const STORAGE_KEY = "waterMeterTracker.v1";
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const FIELDS = ["lakeInput","cityWater","wellMeter","wellFlow","lakeUsage"];
+
+let state = loadState();
+
+function loadState() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.rows && parsed.rows.length === ORIGINAL_DATA.length) return parsed;
+    } catch (e) { /* fall through to defaults */ }
+  }
+  return { month: "April", year: 2026, rows: JSON.parse(JSON.stringify(ORIGINAL_DATA)) };
+}
+
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const status = document.getElementById("saveStatus");
+  status.textContent = "Saved " + new Date().toLocaleTimeString();
+}
+
+function populateMonthSelect() {
+  const sel = document.getElementById("monthSelect");
+  sel.innerHTML = MONTHS.map(m => `<option value="${m}" ${m === state.month ? "selected" : ""}>${m}</option>`).join("");
+}
+
+function renderTable() {
+  const tbody = document.getElementById("tableBody");
+  tbody.innerHTML = "";
+  state.rows.forEach((row, idx) => {
+    const tr = document.createElement("tr");
+    tr.className = idx % 2 === 0 ? "bg-white" : "bg-gray-50";
+    if (row.note) tr.classList.add("flagged");
+
+    const dateLabel = `${state.month} ${row.day}, ${state.year}`;
+    const dateTd = document.createElement("td");
+    dateTd.className = "px-3 py-1.5 font-medium whitespace-nowrap";
+    dateTd.textContent = dateLabel;
+    tr.appendChild(dateTd);
+
+    FIELDS.forEach(field => {
+      const td = document.createElement("td");
+      td.className = "px-2 py-1";
+      const input = document.createElement("input");
+      input.type = "number";
+      input.step = "any";
+      input.value = row[field] === null || row[field] === undefined ? "" : row[field];
+      input.className = "w-full text-right rounded border border-gray-300 px-2 py-1";
+      input.setAttribute("aria-label", `${fieldLabel(field)} for ${dateLabel}`);
+      input.addEventListener("input", () => {
+        const v = input.value.trim();
+        row[field] = v === "" ? null : Number(v);
+        saveState();
+        renderCharts();
+      });
+      td.appendChild(input);
+      tr.appendChild(td);
+    });
+
+    const noteTd = document.createElement("td");
+    noteTd.className = "px-3 py-1.5 text-xs text-yellow-900";
+    const noteInput = document.createElement("input");
+    noteInput.type = "text";
+    noteInput.value = row.note || "";
+    noteInput.className = "w-full rounded border border-gray-300 px-2 py-1 text-xs";
+    noteInput.setAttribute("aria-label", `Notes for ${dateLabel}`);
+    noteInput.addEventListener("input", () => {
+      row.note = noteInput.value;
+      tr.classList.toggle("flagged", !!row.note);
+      saveState();
+    });
+    noteTd.appendChild(noteInput);
+    tr.appendChild(noteTd);
+
+    tbody.appendChild(tr);
+  });
+}
+
+function fieldLabel(field) {
+  return {
+    lakeInput: "Lake Input meter reading",
+    cityWater: "City water meter reading",
+    wellMeter: "Well meter reading",
+    wellFlow: "Well Flow",
+    lakeUsage: "Lake Usage",
+  }[field];
+}
+
+// ---------------------------------------------------------------------
+// Charts
+// ---------------------------------------------------------------------
+let charts = {};
+
+function chartLabels() {
+  return state.rows.map(r => r.day);
+}
+
+function makeLineDataset(field, label, color) {
+  return {
+    label,
+    data: state.rows.map(r => r[field]),
+    borderColor: color,
+    backgroundColor: color,
+    spanGaps: true,
+    tension: 0.25,
+  };
+}
+
+function renderCharts() {
+  const labels = chartLabels();
+
+  buildOrUpdate("meterChart", labels, [
+    makeLineDataset("lakeInput", "Lake Input (gal)", "#1584a8"),
+    makeLineDataset("wellMeter", "Well Meter (gal)", "#0b3d5c"),
+  ]);
+  buildOrUpdate("cityChart", labels, [
+    makeLineDataset("cityWater", "City Water (CCF)", "#2fb4c9"),
+  ]);
+  buildOrUpdate("flowChart", labels, [
+    makeLineDataset("wellFlow", "Well Flow (gal/min)", "#0b7a75"),
+  ]);
+  buildOrUpdate("usageChart", labels, [
+    makeLineDataset("lakeUsage", "Lake Usage (gal)", "#1584a8"),
+  ]);
+}
+
+function buildOrUpdate(canvasId, labels, datasets) {
+  if (charts[canvasId]) {
+    charts[canvasId].data.labels = labels;
+    charts[canvasId].data.datasets = datasets;
+    charts[canvasId].update();
+    return;
+  }
+  const ctx = document.getElementById(canvasId).getContext("2d");
+  charts[canvasId] = new Chart(ctx, {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { title: { display: true, text: "Day of month" } },
+        y: { beginAtZero: false },
+      },
+      plugins: { legend: { position: "bottom" } },
+    },
+  });
+}
+
+// ---------------------------------------------------------------------
+// Toolbar actions
+// ---------------------------------------------------------------------
+document.getElementById("resetBtn").addEventListener("click", () => {
+  if (!confirm("Reset all data back to the original transcription? This discards your edits.")) return;
+  state = { month: "April", year: 2026, rows: JSON.parse(JSON.stringify(ORIGINAL_DATA)) };
+  saveState();
+  populateMonthSelect();
+  document.getElementById("yearInput").value = state.year;
+  renderTable();
+  renderCharts();
+});
+
+document.getElementById("exportBtn").addEventListener("click", () => {
+  const header = ["Date","Lake Input meter reading (gal)","City water meter reading (CCF)","Well meter reading (gal)","Well Flow (gal/min)","Lake Usage (gal)","Notes"];
+  const lines = [header.join(",")];
+  state.rows.forEach(row => {
+    const dateLabel = `${state.month} ${row.day}, ${state.year}`;
+    const vals = [dateLabel, row.lakeInput, row.cityWater, row.wellMeter, row.wellFlow, row.lakeUsage, `"${(row.note || "").replace(/"/g, '""')}"`];
+    lines.push(vals.map(v => v === null || v === undefined ? "" : v).join(","));
+  });
+  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `water_meter_readings_${state.month}_${state.year}.csv`;
+  a.click();
+});
+
+document.getElementById("monthSelect").addEventListener("change", (e) => {
+  state.month = e.target.value;
+  saveState();
+  renderTable();
+});
+document.getElementById("yearInput").addEventListener("input", (e) => {
+  state.year = Number(e.target.value) || state.year;
+  saveState();
+  renderTable();
+});
+
+// ---------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------
+populateMonthSelect();
+document.getElementById("yearInput").value = state.year;
+renderTable();
+renderCharts();
+</script>
+</body>
+</html>
